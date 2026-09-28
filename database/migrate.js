@@ -1,7 +1,7 @@
 require("dotenv").config();
 const fs = require("node:fs/promises");
 const path = require("node:path");
-const { createHash } = require("node:crypto");
+const { migrationChecksum, matchesMigrationChecksum } = require("./migrationChecksum");
 const connectDB = require("../config/db");
 const { sequelize } = connectDB;
 
@@ -12,10 +12,10 @@ async function migrate() {
     const directory = path.join(__dirname, "migrations");
     for (const name of (await fs.readdir(directory)).filter(name => name.endsWith(".sql")).sort()) {
       const sql = await fs.readFile(path.join(directory, name), "utf8");
-      const checksum = createHash("sha256").update(sql).digest("hex");
+      const checksum = migrationChecksum(sql);
       const [rows] = await sequelize.query("SELECT checksum FROM schema_migrations WHERE name = $1", { bind: [name], transaction });
       if (rows.length) {
-        if (rows[0].checksum !== checksum) throw new Error(`Applied migration ${name} has changed. Add a new migration instead.`);
+        if (!matchesMigrationChecksum(sql, rows[0].checksum)) throw new Error(`Applied migration ${name} has changed. Add a new migration instead.`);
         continue;
       }
       await sequelize.query(sql, { transaction });
