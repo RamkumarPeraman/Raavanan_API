@@ -1,48 +1,73 @@
+const { updateById, deleteById } = require("../database/records");
 const Blog = require("../models/Blog");
-
-const serializeBlog = (blog) => {
-  const data = blog.toObject ? blog.toObject() : blog;
-  return { ...data, id: String(data._id) };
+const serializeBlog = blog => {
+  const data = blog.toJSON ? blog.toJSON() : blog;
+  return {
+    ...data,
+    id: String(data._id)
+  };
 };
-
 const listBlogs = async (req, res) => {
-  const blogs = await Blog.find().sort({ date: -1, createdAt: -1 }).lean();
-  return res.json({ success: true, data: blogs.map(serializeBlog) });
+  const blogs = await Blog.findAll({
+    order: [["date", "DESC"], ["createdAt", "DESC"]]
+  });
+  return res.json({
+    success: true,
+    data: blogs.map(serializeBlog)
+  });
 };
-
 const getBlogById = async (req, res) => {
-  const blog = await Blog.findById(req.params.id).lean();
+  const blog = await Blog.findByPk(req.params.id);
   if (!blog) {
-    return res.status(404).json({ success: false, message: "Blog not found." });
+    return res.status(404).json({
+      success: false,
+      message: "Blog not found."
+    });
   }
-  return res.json({ success: true, data: serializeBlog(blog) });
+  return res.json({
+    success: true,
+    data: serializeBlog(blog)
+  });
 };
-
 const createBlog = async (req, res) => {
   const blog = await Blog.create(req.body);
-  return res.status(201).json({ success: true, message: "Blog created successfully.", data: serializeBlog(blog) });
+  return res.status(201).json({
+    success: true,
+    message: "Blog created successfully.",
+    data: serializeBlog(blog)
+  });
 };
-
 const updateBlog = async (req, res) => {
-  const blog = await Blog.findByIdAndUpdate(req.params.id, req.body, { new: true, runValidators: true });
+  const blog = await updateById(Blog, req.params.id, req.body);
   if (!blog) {
-    return res.status(404).json({ success: false, message: "Blog not found." });
+    return res.status(404).json({
+      success: false,
+      message: "Blog not found."
+    });
   }
-  return res.json({ success: true, message: "Blog updated successfully.", data: serializeBlog(blog) });
+  return res.json({
+    success: true,
+    message: "Blog updated successfully.",
+    data: serializeBlog(blog)
+  });
 };
-
 const deleteBlog = async (req, res) => {
-  const blog = await Blog.findByIdAndDelete(req.params.id);
+  const blog = await deleteById(Blog, req.params.id);
   if (!blog) {
-    return res.status(404).json({ success: false, message: "Blog not found." });
+    return res.status(404).json({
+      success: false,
+      message: "Blog not found."
+    });
   }
-  return res.json({ success: true, message: "Blog deleted successfully." });
+  return res.json({
+    success: true,
+    message: "Blog deleted successfully."
+  });
 };
-
 module.exports = {
   listBlogs,
   getBlogById,
   createBlog,
   updateBlog,
-  deleteBlog,
+  deleteBlog
 };
