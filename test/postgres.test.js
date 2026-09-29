@@ -32,7 +32,7 @@ test("PostgreSQL migration and API integration", { skip: !process.env.TEST_DATAB
     await migrate();
     await migrate();
     const [rows] = await sequelize.query("SELECT count(*)::int AS count FROM schema_migrations");
-    assert.equal(rows[0].count, 1);
+    assert.equal(rows[0].count, 3);
   });
   const legacyId = new ObjectId();
   const oldDate = new Date("2023-03-04T00:00:00Z");
@@ -55,6 +55,9 @@ test("PostgreSQL migration and API integration", { skip: !process.env.TEST_DATAB
     assert.equal(rows[0].document.oldExtraField, "kept in archive");
     await assert.rejects(importCollections({ users: [] }), /empty target/);
   });
+  let deliveredSignupOtp;
+  const mailer = require("../utils/mailer");
+  mailer.sendSignupOtp = async message => { deliveredSignupOtp = message; };
   const { app, seedRoles } = require("../server");
   await seedRoles();
   await seedRoles();
@@ -80,6 +83,27 @@ test("PostgreSQL migration and API integration", { skip: !process.env.TEST_DATAB
     otherToken = other.token; otherId = other.user.id;
     assert.equal((await request("POST", "/auth/signup", { name: "Duplicate", email: "MEMBER@example.com", password: "Password123" })).status, 409);
     assert.equal((await request("GET", "/health")).database, "postgresql");
+  });
+  await t.test("signup OTP is emailed, hashed in the database and required before account creation", async () => {
+    const email = "verified-signup@example.com";
+    const requested = await request("POST", "/auth/signup/request-otp", { name: "Verified Member", email, password: "Password123!" });
+    assert.equal(requested.status, 200);
+    assert.equal(deliveredSignupOtp.email, email);
+    assert.match(deliveredSignupOtp.otp, /^\d{6}$/);
+
+    const SignupOtp = defineModel("SignupOtp");
+    const pending = await SignupOtp.unscoped().findOne({ where: { email } });
+    assert.ok(pending);
+    assert.notEqual(pending.otpHash, deliveredSignupOtp.otp);
+    assert.notEqual(pending.signupData.passwordHash, "Password123!");
+    assert.equal((await request("POST", "/auth/signup/verify-otp", { email, otp: "000000" })).status, 400);
+
+    const verified = await request("POST", "/auth/signup/verify-otp", { email, otp: deliveredSignupOtp.otp });
+    assert.equal(verified.status, 201);
+    assert.equal(verified.user.email, email);
+    assert.ok(verified.token);
+    assert.equal(await SignupOtp.count({ where: { email } }), 0);
+    assert.ok(await User.findOne({ where: { email } }));
   });
   await t.test("project CRUD, literal search, dates, validation and SQL injection resistance", async () => {
     const project = await request("POST", "/projects", { title: "100% Project", description: "Testing", category: "Education", startDate: "2024-01-01", impact: { students: 10 } }, adminToken);

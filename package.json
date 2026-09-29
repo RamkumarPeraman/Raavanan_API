@@ -18,6 +18,7 @@
     "express": "^5.2.1",
     "express-validator": "^7.3.1",
     "jsonwebtoken": "^9.0.3",
+    "nodemailer": "^10.0.12",
     "openai": "^6.33.0",
     "pg": "^8.23.0",
     "pg-hstore": "^2.3.4",

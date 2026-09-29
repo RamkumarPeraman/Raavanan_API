@@ -1,6 +1,7 @@
 const { deleteById } = require("../database/records");
 const express = require("express");
 const bcrypt = require("bcryptjs");
+const { randomInt } = require("node:crypto");
 const {
   body
 } = require("express-validator");
@@ -11,6 +12,9 @@ const {
   authenticate
 } = require("../middleware/auth");
 const User = require("../models/User");
+const SignupOtp = require("../models/SignupOtp");
+const { sequelize } = require("../config/db");
+const { sendSignupOtp } = require("../utils/mailer");
 const {
   createMembershipId,
   resolveMembershipType,
@@ -19,6 +23,158 @@ const {
   signToken
 } = require("../utils/userHelpers");
 const router = express.Router();
+const SIGNUP_OTP_TTL_MINUTES = 10;
+const SIGNUP_OTP_RESEND_SECONDS = 60;
+const SIGNUP_OTP_MAX_ATTEMPTS = 5;
+
+const generateOtp = () => String(randomInt(100000, 1000000));
+
+const signupPayload = async (body) => {
+  const role = resolveSignupRole(body.role);
+  return {
+    name: body.name.trim(),
+    email: body.email.trim().toLowerCase(),
+    phone: body.phone || "",
+    role,
+    passwordHash: await bcrypt.hash(body.password, 10),
+    status: "active",
+    department: body.department || "",
+    location: body.location || "",
+    bio: body.bio || "",
+    dateOfBirth: body.dateOfBirth || "",
+    gender: body.gender || "",
+    address: body.address || {},
+    interests: Array.isArray(body.interests) ? body.interests : [],
+    preferences: body.preferences || {},
+    membershipType: resolveMembershipType(role, body.membershipType)
+  };
+};
+
+const ensureEmailAvailable = async (email, res) => {
+  const existingUser = await User.findOne({ where: { email } });
+  if (!existingUser) return true;
+  res.status(409).json({ success: false, message: "User already exists." });
+  return false;
+};
+
+const signupValidators = [
+  body("name").trim().notEmpty().withMessage("Name is required."),
+  body("email").isEmail().withMessage("Valid email is required."),
+  body("password").isLength({ min: 6 }).withMessage("Password must be at least 6 characters."),
+  handleValidation
+];
+
+router.post("/signup/request-otp", signupValidators, async (req, res) => {
+  const email = req.body.email.trim().toLowerCase();
+  if (!(await ensureEmailAvailable(email, res))) return;
+
+  const existingOtp = await SignupOtp.findOne({ where: { email } });
+  if (existingOtp && Date.now() - new Date(existingOtp.lastSentAt).getTime() < SIGNUP_OTP_RESEND_SECONDS * 1000) {
+    return res.status(429).json({ success: false, message: "Please wait before requesting another code." });
+  }
+
+  const otp = generateOtp();
+  const pendingData = await signupPayload(req.body);
+  const values = {
+    email,
+    otpHash: await bcrypt.hash(otp, 8),
+    signupData: pendingData,
+    expiresAt: new Date(Date.now() + SIGNUP_OTP_TTL_MINUTES * 60 * 1000),
+    lastSentAt: new Date(),
+    attempts: 0
+  };
+
+  const pending = existingOtp
+    ? await existingOtp.update(values)
+    : await SignupOtp.create(values);
+
+  try {
+    await sendSignupOtp({ email, name: pendingData.name, otp, expiresInMinutes: SIGNUP_OTP_TTL_MINUTES });
+  } catch (error) {
+    await pending.destroy();
+    throw error;
+  }
+
+  return res.json({
+    success: true,
+    message: "Verification code sent to your email.",
+    email,
+    expiresIn: SIGNUP_OTP_TTL_MINUTES * 60,
+    resendAfter: SIGNUP_OTP_RESEND_SECONDS
+  });
+});
+
+router.post("/signup/resend-otp", [body("email").isEmail().withMessage("Valid email is required."), handleValidation], async (req, res) => {
+  const email = req.body.email.trim().toLowerCase();
+  const pending = await SignupOtp.unscoped().findOne({ where: { email } });
+  if (!pending) return res.status(404).json({ success: false, message: "No pending registration was found." });
+
+  if (Date.now() - new Date(pending.lastSentAt).getTime() < SIGNUP_OTP_RESEND_SECONDS * 1000) {
+    return res.status(429).json({ success: false, message: "Please wait before requesting another code." });
+  }
+
+  const otp = generateOtp();
+  await pending.update({
+    otpHash: await bcrypt.hash(otp, 8),
+    expiresAt: new Date(Date.now() + SIGNUP_OTP_TTL_MINUTES * 60 * 1000),
+    lastSentAt: new Date(),
+    attempts: 0
+  });
+  await sendSignupOtp({ email, name: pending.signupData.name, otp, expiresInMinutes: SIGNUP_OTP_TTL_MINUTES });
+
+  return res.json({
+    success: true,
+    message: "A new verification code was sent.",
+    expiresIn: SIGNUP_OTP_TTL_MINUTES * 60,
+    resendAfter: SIGNUP_OTP_RESEND_SECONDS
+  });
+});
+
+router.post("/signup/verify-otp", [
+  body("email").isEmail().withMessage("Valid email is required."),
+  body("otp").matches(/^\d{6}$/).withMessage("Enter the 6-digit verification code."),
+  handleValidation
+], async (req, res) => {
+  const email = req.body.email.trim().toLowerCase();
+  const pending = await SignupOtp.unscoped().findOne({ where: { email } });
+  if (!pending) return res.status(404).json({ success: false, message: "No pending registration was found." });
+
+  if (new Date(pending.expiresAt).getTime() < Date.now()) {
+    await pending.destroy();
+    return res.status(410).json({ success: false, message: "Verification code expired. Request a new code." });
+  }
+  if (pending.attempts >= SIGNUP_OTP_MAX_ATTEMPTS) {
+    return res.status(429).json({ success: false, message: "Too many incorrect attempts. Request a new code." });
+  }
+
+  const validOtp = await bcrypt.compare(req.body.otp, pending.otpHash);
+  if (!validOtp) {
+    await pending.increment("attempts");
+    return res.status(400).json({ success: false, message: "Incorrect verification code." });
+  }
+  if (!(await ensureEmailAvailable(email, res))) {
+    await pending.destroy();
+    return;
+  }
+
+  const user = await sequelize.transaction(async (transaction) => {
+    const createdUser = await User.create({
+      ...pending.signupData,
+      membershipId: createMembershipId(),
+      lastActive: new Date()
+    }, { transaction });
+    await SignupOtp.destroy({ where: { email }, transaction });
+    return createdUser;
+  });
+
+  return res.status(201).json({
+    success: true,
+    message: "Email verified and account created successfully.",
+    token: signToken(user),
+    user: sanitizeUser(user)
+  });
+});
+
 router.post("/signup", [body("name").trim().notEmpty().withMessage("Name is required."), body("email").isEmail().withMessage("Valid email is required."), body("password").isLength({
   min: 6
 }).withMessage("Password must be at least 6 characters."), handleValidation], async (req, res) => {

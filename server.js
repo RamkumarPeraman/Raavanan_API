@@ -128,7 +128,7 @@ app.use((error, req, res, next) => {
   if (error.name === "SequelizeValidationError" || error.name === "SequelizeForeignKeyConstraintError" || ["23514", "22P02", "22007"].includes(error.original?.code)) {
     return res.status(400).json({ success: false, message: "Invalid record data. Check the required fields and allowed values." });
   }
-  if (error.status >= 400 && error.status < 500) {
+  if (error.status >= 400 && error.status < 600) {
     return res.status(error.status).json({ success: false, message: error.message });
   }
   console.error("Request failed:", error.name);
