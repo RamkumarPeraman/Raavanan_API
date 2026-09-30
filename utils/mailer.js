@@ -8,6 +8,15 @@ const escapeHtml = (value) => String(value).replace(/[&<>'"]/g, character => ({
   '"': "&quot;"
 })[character]);
 
+const parseSender = () => {
+  const configured = process.env.MAIL_FROM || process.env.SMTP_USER || "";
+  const match = configured.match(/^\s*"?([^"<]*)"?\s*<([^>]+)>\s*$/);
+  return {
+    name: process.env.BREVO_SENDER_NAME || match?.[1]?.trim() || "Raavana Thalaigal Trust",
+    email: process.env.BREVO_SENDER_EMAIL || match?.[2]?.trim() || configured.trim()
+  };
+};
+
 const getTransport = () => {
   const { SMTP_HOST, SMTP_PORT, SMTP_SECURE, SMTP_USER, SMTP_PASS } = process.env;
   if (!SMTP_HOST || !SMTP_USER || !SMTP_PASS) {
@@ -21,16 +30,54 @@ const getTransport = () => {
     port: Number(SMTP_PORT || 587),
     secure: SMTP_SECURE === "true",
     auth: { user: SMTP_USER, pass: SMTP_PASS },
+    connectionTimeout: 10000,
+    greetingTimeout: 10000,
+    socketTimeout: 15000,
   });
 };
 
-const sendSignupOtp = async ({ email, name, otp, expiresInMinutes }) => {
+const sendViaBrevo = async ({ to, subject, html }) => {
+  const sender = parseSender();
+  if (!sender.email) {
+    const error = new Error("BREVO_SENDER_EMAIL or MAIL_FROM must contain a verified sender email.");
+    error.status = 503;
+    throw error;
+  }
+
+  const response = await fetch("https://api.brevo.com/v3/smtp/email", {
+    method: "POST",
+    headers: {
+      accept: "application/json",
+      "api-key": process.env.BREVO_API_KEY,
+      "content-type": "application/json"
+    },
+    body: JSON.stringify({
+      sender,
+      to: [{ email: to }],
+      subject,
+      htmlContent: html
+    }),
+    signal: AbortSignal.timeout(15000)
+  });
+
+  if (!response.ok) {
+    const details = await response.json().catch(() => ({}));
+    const error = new Error(details.message || `Brevo email delivery failed with status ${response.status}.`);
+    error.status = 502;
+    throw error;
+  }
+};
+
+const sendEmail = async message => {
+  if (process.env.BREVO_API_KEY) return sendViaBrevo(message);
   const transport = getTransport();
-  const from = process.env.MAIL_FROM || process.env.SMTP_USER;
+  return transport.sendMail({ ...message, from: process.env.MAIL_FROM || process.env.SMTP_USER });
+};
+
+const sendSignupOtp = async ({ email, name, otp, expiresInMinutes }) => {
   const safeName = escapeHtml(name);
 
-  await transport.sendMail({
-    from,
+  await sendEmail({
     to: email,
     subject: "Verify your Raavana Thalaigal Trust account",
     text: `Hello ${name}, your verification code is ${otp}. It expires in ${expiresInMinutes} minutes.`,
@@ -47,12 +94,9 @@ const sendSignupOtp = async ({ email, name, otp, expiresInMinutes }) => {
 };
 
 const sendPasswordResetOtp = async ({ email, name, otp, expiresInMinutes }) => {
-  const transport = getTransport();
-  const from = process.env.MAIL_FROM || process.env.SMTP_USER;
   const safeName = escapeHtml(name);
 
-  await transport.sendMail({
-    from,
+  await sendEmail({
     to: email,
     subject: "Reset your Raavana Thalaigal Trust password",
     text: `Hello ${name}, your password reset code is ${otp}. It expires in ${expiresInMinutes} minutes.`,
