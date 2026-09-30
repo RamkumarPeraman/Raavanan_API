@@ -32,7 +32,7 @@ test("PostgreSQL migration and API integration", { skip: !process.env.TEST_DATAB
     await migrate();
     await migrate();
     const [rows] = await sequelize.query("SELECT count(*)::int AS count FROM schema_migrations");
-    assert.equal(rows[0].count, 3);
+    assert.equal(rows[0].count, 4);
   });
   const legacyId = new ObjectId();
   const oldDate = new Date("2023-03-04T00:00:00Z");
@@ -56,8 +56,10 @@ test("PostgreSQL migration and API integration", { skip: !process.env.TEST_DATAB
     await assert.rejects(importCollections({ users: [] }), /empty target/);
   });
   let deliveredSignupOtp;
+  let deliveredPasswordResetOtp;
   const mailer = require("../utils/mailer");
   mailer.sendSignupOtp = async message => { deliveredSignupOtp = message; };
+  mailer.sendPasswordResetOtp = async message => { deliveredPasswordResetOtp = message; };
   const { app, seedRoles } = require("../server");
   await seedRoles();
   await seedRoles();
@@ -104,6 +106,26 @@ test("PostgreSQL migration and API integration", { skip: !process.env.TEST_DATAB
     assert.ok(verified.token);
     assert.equal(await SignupOtp.count({ where: { email } }), 0);
     assert.ok(await User.findOne({ where: { email } }));
+  });
+  await t.test("password reset requires the emailed OTP and returns a working new login", async () => {
+    const email = "member@example.com";
+    const requested = await request("POST", "/auth/forgot-password", { email });
+    assert.equal(requested.status, 200);
+    assert.equal(deliveredPasswordResetOtp.email, email);
+    assert.match(deliveredPasswordResetOtp.otp, /^\d{6}$/);
+
+    const PasswordResetOtp = defineModel("PasswordResetOtp");
+    const pending = await PasswordResetOtp.unscoped().findOne({ where: { email } });
+    assert.ok(pending);
+    assert.notEqual(pending.otpHash, deliveredPasswordResetOtp.otp);
+    assert.equal((await request("POST", "/auth/verify-otp", { email, otp: "000000" })).status, 400);
+
+    const verified = await request("POST", "/auth/verify-otp", { email, otp: deliveredPasswordResetOtp.otp });
+    assert.equal(verified.status, 200);
+    assert.ok(verified.resetToken);
+    assert.equal((await request("POST", "/auth/reset-password", { email, newPassword: "NewPassword123!", resetToken: verified.resetToken })).status, 200);
+    assert.equal(await PasswordResetOtp.count({ where: { email } }), 0);
+    assert.equal((await request("POST", "/auth/login", { email, password: "NewPassword123!" })).status, 200);
   });
   await t.test("project CRUD, literal search, dates, validation and SQL injection resistance", async () => {
     const project = await request("POST", "/projects", { title: "100% Project", description: "Testing", category: "Education", startDate: "2024-01-01", impact: { students: 10 } }, adminToken);

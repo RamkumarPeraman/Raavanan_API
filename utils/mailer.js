@@ -46,4 +46,26 @@ const sendSignupOtp = async ({ email, name, otp, expiresInMinutes }) => {
   });
 };
 
-module.exports = { sendSignupOtp };
+const sendPasswordResetOtp = async ({ email, name, otp, expiresInMinutes }) => {
+  const transport = getTransport();
+  const from = process.env.MAIL_FROM || process.env.SMTP_USER;
+  const safeName = escapeHtml(name);
+
+  await transport.sendMail({
+    from,
+    to: email,
+    subject: "Reset your Raavana Thalaigal Trust password",
+    text: `Hello ${name}, your password reset code is ${otp}. It expires in ${expiresInMinutes} minutes.`,
+    html: `
+      <div style="font-family:Arial,sans-serif;max-width:560px;margin:auto;color:#172033">
+        <h2 style="color:#126f6b">Reset your password</h2>
+        <p>Hello ${safeName},</p>
+        <p>Use this verification code to reset your Raavana Thalaigal Trust password:</p>
+        <div style="margin:24px 0;padding:18px;border-radius:12px;background:#eef8f7;text-align:center;font-size:32px;font-weight:700;letter-spacing:10px;color:#126f6b">${otp}</div>
+        <p>This code expires in ${expiresInMinutes} minutes. If you did not request a password reset, you can ignore this email.</p>
+      </div>
+    `,
+  });
+};
+
+module.exports = { sendPasswordResetOtp, sendSignupOtp };

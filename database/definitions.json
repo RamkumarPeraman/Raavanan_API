@@ -926,6 +926,39 @@
       }
     }
   },
+  "PasswordResetOtp": {
+    "table": "password_reset_otps",
+    "fields": {
+      "email": {
+        "type": "string",
+        "required": true,
+        "unique": true,
+        "trim": true,
+        "lowercase": true
+      },
+      "otpHash": {
+        "type": "string",
+        "required": true,
+        "select": false
+      },
+      "expiresAt": {
+        "type": "date",
+        "required": true
+      },
+      "lastSentAt": {
+        "type": "date",
+        "required": true
+      },
+      "attempts": {
+        "type": "number",
+        "default": 0,
+        "min": 0
+      },
+      "verifiedAt": {
+        "type": "date"
+      }
+    }
+  },
   "SignupOtp": {
     "table": "signup_otps",
     "fields": {

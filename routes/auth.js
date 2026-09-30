@@ -1,6 +1,7 @@
 const { deleteById } = require("../database/records");
 const express = require("express");
 const bcrypt = require("bcryptjs");
+const jwt = require("jsonwebtoken");
 const { randomInt } = require("node:crypto");
 const {
   body
@@ -13,8 +14,9 @@ const {
 } = require("../middleware/auth");
 const User = require("../models/User");
 const SignupOtp = require("../models/SignupOtp");
+const PasswordResetOtp = require("../models/PasswordResetOtp");
 const { sequelize } = require("../config/db");
-const { sendSignupOtp } = require("../utils/mailer");
+const { sendPasswordResetOtp, sendSignupOtp } = require("../utils/mailer");
 const {
   createMembershipId,
   resolveMembershipType,
@@ -26,6 +28,9 @@ const router = express.Router();
 const SIGNUP_OTP_TTL_MINUTES = 10;
 const SIGNUP_OTP_RESEND_SECONDS = 60;
 const SIGNUP_OTP_MAX_ATTEMPTS = 5;
+const PASSWORD_RESET_OTP_TTL_MINUTES = 10;
+const PASSWORD_RESET_OTP_RESEND_SECONDS = 60;
+const PASSWORD_RESET_OTP_MAX_ATTEMPTS = 5;
 
 const generateOtp = () => String(randomInt(100000, 1000000));
 
@@ -253,6 +258,117 @@ router.post("/login", [body("email").isEmail().withMessage("Valid email is requi
     token,
     user: sanitizeUser(user)
   });
+});
+router.post("/forgot-password", [
+  body("email").isEmail().withMessage("Valid email is required."),
+  handleValidation
+], async (req, res) => {
+  const email = req.body.email.trim().toLowerCase();
+  const user = await User.findOne({ where: { email } });
+  if (!user) {
+    return res.status(404).json({ success: false, message: "No account was found with this email address." });
+  }
+
+  const existingOtp = await PasswordResetOtp.findOne({ where: { email } });
+  if (existingOtp && Date.now() - new Date(existingOtp.lastSentAt).getTime() < PASSWORD_RESET_OTP_RESEND_SECONDS * 1000) {
+    return res.status(429).json({ success: false, message: "Please wait before requesting another code." });
+  }
+
+  const otp = generateOtp();
+  const values = {
+    email,
+    otpHash: await bcrypt.hash(otp, 8),
+    expiresAt: new Date(Date.now() + PASSWORD_RESET_OTP_TTL_MINUTES * 60 * 1000),
+    lastSentAt: new Date(),
+    attempts: 0,
+    verifiedAt: null
+  };
+  const pending = existingOtp
+    ? await existingOtp.update(values)
+    : await PasswordResetOtp.create(values);
+
+  try {
+    await sendPasswordResetOtp({
+      email,
+      name: user.name,
+      otp,
+      expiresInMinutes: PASSWORD_RESET_OTP_TTL_MINUTES
+    });
+  } catch (error) {
+    await pending.destroy();
+    throw error;
+  }
+
+  return res.json({
+    success: true,
+    message: "Password reset code sent to your email.",
+    expiresIn: PASSWORD_RESET_OTP_TTL_MINUTES * 60,
+    resendAfter: PASSWORD_RESET_OTP_RESEND_SECONDS
+  });
+});
+router.post("/verify-otp", [
+  body("email").isEmail().withMessage("Valid email is required."),
+  body("otp").matches(/^\d{6}$/).withMessage("Enter the 6-digit verification code."),
+  handleValidation
+], async (req, res) => {
+  const email = req.body.email.trim().toLowerCase();
+  const pending = await PasswordResetOtp.unscoped().findOne({ where: { email } });
+  if (!pending) {
+    return res.status(404).json({ success: false, message: "No pending password reset was found." });
+  }
+  if (new Date(pending.expiresAt).getTime() < Date.now()) {
+    await pending.destroy();
+    return res.status(410).json({ success: false, message: "Verification code expired. Request a new code." });
+  }
+  if (pending.attempts >= PASSWORD_RESET_OTP_MAX_ATTEMPTS) {
+    return res.status(429).json({ success: false, message: "Too many incorrect attempts. Request a new code." });
+  }
+
+  const validOtp = await bcrypt.compare(req.body.otp, pending.otpHash);
+  if (!validOtp) {
+    await pending.increment("attempts");
+    return res.status(400).json({ success: false, message: "Incorrect verification code." });
+  }
+
+  pending.verifiedAt = new Date();
+  await pending.save();
+  const resetToken = jwt.sign(
+    { email, purpose: "password-reset" },
+    process.env.JWT_SECRET,
+    { expiresIn: "10m" }
+  );
+  return res.json({ success: true, message: "Verification code confirmed.", resetToken });
+});
+router.post("/reset-password", [
+  body("email").isEmail().withMessage("Valid email is required."),
+  body("newPassword").isLength({ min: 8 }).withMessage("New password must be at least 8 characters."),
+  body("resetToken").notEmpty().withMessage("Password reset verification is required."),
+  handleValidation
+], async (req, res) => {
+  const email = req.body.email.trim().toLowerCase();
+  let token;
+  try {
+    token = jwt.verify(req.body.resetToken, process.env.JWT_SECRET);
+  } catch {
+    return res.status(401).json({ success: false, message: "Password reset verification expired. Request a new code." });
+  }
+  if (token.purpose !== "password-reset" || token.email !== email) {
+    return res.status(401).json({ success: false, message: "Invalid password reset verification." });
+  }
+
+  const pending = await PasswordResetOtp.findOne({ where: { email } });
+  if (!pending?.verifiedAt || new Date(pending.expiresAt).getTime() < Date.now()) {
+    return res.status(401).json({ success: false, message: "Verify a current password reset code first." });
+  }
+  const user = await User.findOne({ where: { email } });
+  if (!user) return res.status(404).json({ success: false, message: "User not found." });
+
+  await sequelize.transaction(async transaction => {
+    user.passwordHash = await bcrypt.hash(req.body.newPassword, 10);
+    await user.save({ transaction });
+    await PasswordResetOtp.destroy({ where: { email }, transaction });
+  });
+  return res.json({ success: true, message: "Password reset successfully." });
 });
 router.get("/me", authenticate, async (req, res) => {
   const user = await User.findByPk(req.user.id);
