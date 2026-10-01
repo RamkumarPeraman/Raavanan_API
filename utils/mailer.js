@@ -39,7 +39,7 @@ const getTransport = () => {
 };
 
 const sendViaBrevo = async ({ to, subject, html }) => {
-  const sender = parseSender();
+  let sender = parseSender();
   if (!sender.email) {
     const error = new Error("BREVO_SENDER_EMAIL or MAIL_FROM must contain a verified sender email.");
     error.status = 503;
@@ -60,14 +60,20 @@ const sendViaBrevo = async ({ to, subject, html }) => {
       error.status = 502;
       throw error;
     }
-    const isActive = (sendersPayload.senders || []).some(candidate =>
-      candidate.active && candidate.email?.toLowerCase() === sender.email.toLowerCase()
+    const activeSenders = (sendersPayload.senders || []).filter(candidate => candidate.active && candidate.email);
+    const configuredSender = activeSenders.find(candidate =>
+      candidate.email.toLowerCase() === sender.email.toLowerCase()
     );
-    if (!isActive) {
-      const error = new Error(`The Brevo sender ${sender.email} is not verified or active.`);
+    const selectedSender = configuredSender || activeSenders[0];
+    if (!selectedSender) {
+      const error = new Error("No verified and active Brevo sender is available.");
       error.status = 503;
       throw error;
     }
+    sender = {
+      name: process.env.BREVO_SENDER_NAME || selectedSender.name || sender.name,
+      email: selectedSender.email
+    };
     activeBrevoSender = sender.email.toLowerCase();
   }
 
