@@ -1,5 +1,7 @@
 const nodemailer = require("nodemailer");
 
+let activeBrevoSender;
+
 const escapeHtml = (value) => String(value).replace(/[&<>'"]/g, character => ({
   "&": "&amp;",
   "<": "&lt;",
@@ -44,6 +46,31 @@ const sendViaBrevo = async ({ to, subject, html }) => {
     throw error;
   }
 
+  if (activeBrevoSender !== sender.email.toLowerCase()) {
+    const sendersResponse = await fetch("https://api.brevo.com/v3/senders", {
+      headers: {
+        accept: "application/json",
+        "api-key": process.env.BREVO_API_KEY
+      },
+      signal: AbortSignal.timeout(15000)
+    });
+    const sendersPayload = await sendersResponse.json().catch(() => ({}));
+    if (!sendersResponse.ok) {
+      const error = new Error(sendersPayload.message || "Could not verify the Brevo sender.");
+      error.status = 502;
+      throw error;
+    }
+    const isActive = (sendersPayload.senders || []).some(candidate =>
+      candidate.active && candidate.email?.toLowerCase() === sender.email.toLowerCase()
+    );
+    if (!isActive) {
+      const error = new Error(`The Brevo sender ${sender.email} is not verified or active.`);
+      error.status = 503;
+      throw error;
+    }
+    activeBrevoSender = sender.email.toLowerCase();
+  }
+
   const response = await fetch("https://api.brevo.com/v3/smtp/email", {
     method: "POST",
     headers: {
@@ -69,7 +96,8 @@ const sendViaBrevo = async ({ to, subject, html }) => {
 };
 
 const sendEmail = async message => {
-  if (process.env.BREVO_API_KEY) return sendViaBrevo(message);
+  const provider = process.env.EMAIL_PROVIDER?.trim().toLowerCase();
+  if (provider === "brevo" || (!provider && process.env.BREVO_API_KEY)) return sendViaBrevo(message);
   const transport = getTransport();
   return transport.sendMail({ ...message, from: process.env.MAIL_FROM || process.env.SMTP_USER });
 };
