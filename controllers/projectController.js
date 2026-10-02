@@ -1,6 +1,7 @@
 const { updateById, deleteById, containsText, exactText } = require("../database/records");
 const { Op } = require("sequelize");
 const Project = require("../models/Project");
+const { listRecords } = require("../database/pagination");
 const PROJECT_FIELDS = ["title", "description", "longDescription", "image", "gallery", "status", "category", "progress", "goal", "raised", "location", "statesCovered", "startDate", "endDate", "impact", "livesImpacted", "volunteersEngaged", "objectives", "achievements", "partners", "funding", "reportUrl", "featured"];
 const toNumberOrDefault = (value, fallback = 0) => {
   if (value === "" || value === null || value === undefined) {
@@ -100,14 +101,10 @@ const buildProjectQuery = ({
   return query;
 };
 const listProjects = async (req, res) => {
-  const projects = await Project.findAll({
+  return res.json(await listRecords(Project, {
     where: buildProjectQuery(req.query),
     order: [["createdAt", "DESC"]]
-  });
-  return res.json({
-    success: true,
-    data: projects.map(serializeProject)
-  });
+  }, req.query, serializeProject));
 };
 const getProjectById = async (req, res) => {
   const project = await Project.findByPk(req.params.id);

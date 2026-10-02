@@ -1,4 +1,6 @@
-const { updateById, deleteById } = require("../database/records");
+const { updateById, deleteById, containsText } = require("../database/records");
+const { Op } = require("sequelize");
+const { listRecords } = require("../database/pagination");
 const VolunteerOpportunity = require("../models/VolunteerOpportunity");
 const serializeOpportunity = opportunity => {
   const data = opportunity.toJSON ? opportunity.toJSON() : opportunity;
@@ -11,14 +13,13 @@ const listVolunteerOpportunities = async (req, res) => {
   const query = req.query.includeInactive === "true" ? {} : {
     status: "active"
   };
-  const opportunities = await VolunteerOpportunity.findAll({
+  if (req.query.search) {
+    query[Op.or] = ["title", "category", "location", "commitment"].map(field => ({ [field]: { [Op.iLike]: containsText(req.query.search) } }));
+  }
+  return res.json(await listRecords(VolunteerOpportunity, {
     where: query,
     order: [["createdAt", "DESC"]]
-  });
-  return res.json({
-    success: true,
-    data: opportunities.map(serializeOpportunity)
-  });
+  }, req.query, serializeOpportunity));
 };
 const createVolunteerOpportunity = async (req, res) => {
   const opportunity = await VolunteerOpportunity.create(req.body);

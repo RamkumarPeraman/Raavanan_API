@@ -3,6 +3,7 @@ const { Op } = require("sequelize");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const Volunteer = require("../models/Volunteer");
+const { listRecords } = require("../database/pagination");
 const VOLUNTEER_FIELDS = ["fullName", "email", "phone", "address", "gender", "city", "state", "pincode", "dateOfBirth", "education", "educationOther", "institution", "occupation", "occupationOther", "interests", "skills", "skillsOther", "capacity", "capacityOther", "availability", "hoursPerWeek", "experience", "motivation", "previousVolunteer", "emergencyContact", "hearAbout", "hearAboutOther", "selectedOpportunityId", "selectedOpportunityTitle", "corePurpose", "newLaw", "viewOnSociety", "leadershipAction", "dailyHabit", "agreeConduct", "agreeDeclaration", "status"];
 const toArray = value => {
   if (Array.isArray(value)) {
@@ -103,14 +104,10 @@ const listVolunteers = async (req, res) => {
         }
       }];
     }
-    const volunteers = await Volunteer.findAll({
+    return res.json(await listRecords(Volunteer, {
       where: query,
       order: [["createdAt", "DESC"]]
-    });
-    return res.json({
-      success: true,
-      data: volunteers.map(serializeVolunteer)
-    });
+    }, req.query, serializeVolunteer));
   } catch (error) {
     console.error("Error listing volunteers:", error);
     return res.status(500).json({

@@ -1,4 +1,6 @@
-const { updateById, deleteById } = require("../database/records");
+const { updateById, deleteById, containsText } = require("../database/records");
+const { Op } = require("sequelize");
+const { listRecords } = require("../database/pagination");
 const Blog = require("../models/Blog");
 const serializeBlog = blog => {
   const data = blog.toJSON ? blog.toJSON() : blog;
@@ -8,13 +10,13 @@ const serializeBlog = blog => {
   };
 };
 const listBlogs = async (req, res) => {
-  const blogs = await Blog.findAll({
+  const where = req.query.search ? {
+    [Op.or]: ["title", "category", "author"].map(field => ({ [field]: { [Op.iLike]: containsText(req.query.search) } }))
+  } : {};
+  return res.json(await listRecords(Blog, {
+    where,
     order: [["date", "DESC"], ["createdAt", "DESC"]]
-  });
-  return res.json({
-    success: true,
-    data: blogs.map(serializeBlog)
-  });
+  }, req.query, serializeBlog));
 };
 const getBlogById = async (req, res) => {
   const blog = await Blog.findByPk(req.params.id);

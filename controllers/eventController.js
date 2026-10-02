@@ -7,6 +7,7 @@ const {
   exactText
 } = require("../database/records");
 const Event = require("../models/Event");
+const { listRecords } = require("../database/pagination");
 const User = require("../models/User");
 const serializeEvent = event => {
   const data = event.toJSON ? event.toJSON() : event;
@@ -17,13 +18,13 @@ const serializeEvent = event => {
   };
 };
 const listEvents = async (req, res) => {
-  const events = await Event.findAll({
+  const where = req.query.search ? {
+    [Op.or]: ["title", "type", "location"].map(field => ({ [field]: { [Op.iLike]: containsText(req.query.search) } }))
+  } : {};
+  return res.json(await listRecords(Event, {
+    where,
     order: [["date", "ASC"], ["createdAt", "DESC"]]
-  });
-  return res.json({
-    success: true,
-    data: events.map(serializeEvent)
-  });
+  }, req.query, serializeEvent));
 };
 const listMyRegisteredEvents = async (req, res) => {
   const events = await Event.findAll({

@@ -1,6 +1,7 @@
 const { updateById, deleteById, containsText, exactText } = require("../database/records");
 const { Op } = require("sequelize");
 const Report = require("../models/Report");
+const { listRecords } = require("../database/pagination");
 const REPORT_FIELDS = ["title", "type", "category", "year", "period", "publishedDate", "description", "summary", "fileSize", "pages", "downloads", "views", "featured", "thumbnail", "url", "metrics", "highlights", "projects", "testimonials", "financial", "gallery", "status"];
 const toNumberOrDefault = (value, fallback = 0) => {
   if (value === "" || value === null || value === undefined) {
@@ -144,14 +145,10 @@ const buildReportQuery = ({
   return query;
 };
 const listReports = async (req, res) => {
-  const reports = await Report.findAll({
+  return res.json(await listRecords(Report, {
     where: buildReportQuery(req.query),
     order: [["publishedDate", "DESC"], ["createdAt", "DESC"]]
-  });
-  return res.json({
-    success: true,
-    data: reports.map(serializeReport)
-  });
+  }, req.query, serializeReport));
 };
 const getReportById = async (req, res) => {
   const report = await Report.findByPk(req.params.id);

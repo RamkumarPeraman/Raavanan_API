@@ -1,6 +1,7 @@
-const { deleteById } = require("../database/records");
+const { deleteById, containsText } = require("../database/records");
 const { Op } = require("sequelize");
 const Donation = require("../models/Donation");
+const { listRecords } = require("../database/pagination");
 const serializeDonation = donation => {
   const data = donation.toJSON ? donation.toJSON() : donation;
   return {
@@ -19,14 +20,13 @@ const listDonations = async (req, res) => {
   if (req.query.project && req.query.project !== "all") {
     query.project = req.query.project;
   }
-  const donations = await Donation.findAll({
+  if (req.query.search) {
+    query[Op.or] = ["name", "email", "phone", "project", "transactionId"].map(field => ({ [field]: { [Op.iLike]: containsText(req.query.search) } }));
+  }
+  return res.json(await listRecords(Donation, {
     where: query,
     order: [["createdAt", "DESC"]]
-  });
-  return res.json({
-    success: true,
-    data: donations.map(serializeDonation)
-  });
+  }, req.query, serializeDonation));
 };
 const getDonationById = async (req, res) => {
   const donation = await Donation.findByPk(req.params.id);
@@ -128,15 +128,17 @@ const getDonationStats = async (req, res) => {
   const startOfMonth = new Date();
   startOfMonth.setDate(1);
   startOfMonth.setHours(0, 0, 0, 0);
-  const [totalAmount, totalDonations, monthlyDonors, oneTimeDonors, thisMonthAmount] = await Promise.all([
+  const [totalAmount, totalDonations, monthlyDonors, oneTimeDonors, thisMonthAmount, acceptedAmount] = await Promise.all([
     Donation.sum("amount"), Donation.count(), Donation.count({ where: { type: "monthly" } }),
     Donation.count({ where: { type: { [Op.ne]: "monthly" } } }),
     Donation.sum("amount", { where: { createdAt: { [Op.gte]: startOfMonth } } }),
+    Donation.sum("amount", { where: { paymentStatus: "accepted" } }),
   ]);
   return res.json({
     success: true,
     data: {
       totalAmount: Number(totalAmount || 0),
+      acceptedAmount: Number(acceptedAmount || 0),
       totalDonations: totalDonations,
       monthlyDonors,
       oneTimeDonors,
