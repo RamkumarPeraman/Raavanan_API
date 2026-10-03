@@ -32,7 +32,7 @@ test("PostgreSQL migration and API integration", { skip: !process.env.TEST_DATAB
     await migrate();
     await migrate();
     const [rows] = await sequelize.query("SELECT count(*)::int AS count FROM schema_migrations");
-    assert.equal(rows[0].count, 8);
+    assert.equal(rows[0].count, 9);
   });
   const legacyId = new ObjectId();
   const oldDate = new Date("2023-03-04T00:00:00Z");
@@ -220,6 +220,17 @@ test("PostgreSQL migration and API integration", { skip: !process.env.TEST_DATAB
     assert.equal(role.status, 201);
     const assigned = await request("PATCH", `/roles/assign/${memberId}`, { roleId: role.data.id }, adminToken);
     assert.equal(assigned.status, 200); assert.equal(assigned.data.role, "custom_role");
+    const initialAccess = (await request("GET", "/roles/access", undefined, memberToken)).data.permissions;
+    assert.ok(initialAccess.includes("projects:read"));
+    assert.ok(initialAccess.includes("page:home"));
+    assert.equal((await request("GET", "/users", undefined, memberToken)).status, 403);
+    assert.equal((await request("PUT", `/roles/${role.data.id}`, { permissions: ["users:read", "users:write", "roles:read", "page:home", "page:my_groups", "page:roles"] }, adminToken)).status, 200);
+    const updatedAccess = (await request("GET", "/roles/access", undefined, memberToken)).data.permissions;
+    assert.ok(updatedAccess.includes("page:my_groups"));
+    assert.ok(!updatedAccess.includes("page:projects"));
+    assert.equal((await request("GET", "/users", undefined, memberToken)).status, 200);
+    assert.equal((await request("GET", "/roles", undefined, memberToken)).status, 200);
+    assert.equal((await request("PUT", `/users/${memberId}`, { role: "super_admin" }, memberToken)).status, 403);
   });
   await t.test("every content model supports validated PostgreSQL writes", async () => {
     const seeds = require("../data/contentSeeds");

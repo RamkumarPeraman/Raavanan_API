@@ -5,6 +5,7 @@ const {
   AVAILABLE_PERMISSIONS
 } = require("../models/Role");
 const User = require("../models/User");
+const isProtectedRole = role => role.isSystem || ["super_admin", "admin", "member"].includes(role.name);
 const {
   sanitizeUser,
   normalizeRole,
@@ -119,7 +120,7 @@ const updateRole = async (req, res) => {
     color,
     status
   } = req.body;
-  if (name && role.isSystem && name.trim().toLowerCase() !== role.name) {
+  if (name && isProtectedRole(role) && name.trim().toLowerCase() !== role.name) {
     return res.status(400).json({
       success: false,
       message: "Cannot rename a system role."
@@ -140,7 +141,7 @@ const updateRole = async (req, res) => {
         message: "A role with this name already exists."
       });
     }
-    if (!role.isSystem) {
+    if (!isProtectedRole(role)) {
       role.name = name.trim().toLowerCase();
     }
   }
@@ -164,7 +165,7 @@ const deleteRole = async (req, res) => {
       message: "Role not found."
     });
   }
-  if (role.isSystem) {
+  if (isProtectedRole(role)) {
     return res.status(400).json({
       success: false,
       message: "System roles cannot be deleted."

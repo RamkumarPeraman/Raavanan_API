@@ -5,8 +5,11 @@ const {
 } = require("express-validator");
 const {
   authenticate,
-  authorize
+  authorize, authorizePermission
 } = require("../middleware/auth");
+const Role = require("../models/Role");
+const User = require("../models/User");
+const { normalizeRole } = require("../utils/userHelpers");
 const {
   handleValidation
 } = require("../middleware/validation");
@@ -22,34 +25,51 @@ const {
 } = require("../controllers/roleController");
 const router = express.Router();
 router.use(authenticate);
+router.get("/access", async (req, res, next) => {
+  try {
+    const user = await User.findByPk(req.user.id);
+    if (!user || user.status === "inactive") return res.status(403).json({ success: false, message: "Account is inactive or unavailable." });
+    const roleName = normalizeRole(user.role);
+    const role = await Role.findOne({ where: { name: roleName, status: "active" } });
+    const catalog = require("../models/Role").AVAILABLE_PERMISSIONS;
+    if (roleName === "super_admin") return res.json({ success: true, data: { role: roleName, permissions: catalog } });
+    const saved = role?.permissions || [];
+    const pagePermissions = catalog.filter(permission => permission.startsWith("page:"));
+    const explicitPages = saved.filter(permission => permission.startsWith("page:"));
+    const permissions = ["admin"].includes(roleName)
+      ? [...catalog.filter(permission => !permission.startsWith("page:")), ...(explicitPages.length ? explicitPages : pagePermissions)]
+      : [...saved, ...(explicitPages.length ? [] : pagePermissions)];
+    return res.json({ success: true, data: { role: roleName, permissions: [...new Set([...permissions, "page:home"])] } });
+  } catch (error) { return next(error); }
+});
 
 /**
  * GET /api/roles/permissions
  * List all available permissions grouped by resource.
  * Accessible by admin and above.
  */
-router.get("/permissions", authorize("ADMIN", "SUPER_ADMIN"), getPermissions);
+router.get("/permissions", authorizePermission("roles:read"), getPermissions);
 
 /**
  * GET /api/roles/stats
  * Get each role with its assigned user count.
  * Accessible by admin and above.
  */
-router.get("/stats", authorize("ADMIN", "SUPER_ADMIN"), getRoleStats);
+router.get("/stats", authorizePermission("roles:read"), getRoleStats);
 
 /**
  * GET /api/roles
  * List all roles. Supports ?status=active|inactive|all and ?search=
  * Accessible by admin and above.
  */
-router.get("/", authorize("ADMIN", "SUPER_ADMIN"), listRoles);
+router.get("/", authorizePermission("roles:read"), listRoles);
 
 /**
  * GET /api/roles/:id
  * Get a single role by ID.
  * Accessible by admin and above.
  */
-router.get("/:id", [param("id").matches(/^(?:[a-f0-9]{24}|[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})$/i).withMessage("Invalid role ID."), handleValidation], authorize("ADMIN", "SUPER_ADMIN"), getRoleById);
+router.get("/:id", [param("id").matches(/^(?:[a-f0-9]{24}|[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})$/i).withMessage("Invalid role ID."), handleValidation], authorizePermission("roles:read"), getRoleById);
 
 /**
  * POST /api/roles

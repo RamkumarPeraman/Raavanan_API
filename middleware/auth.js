@@ -1,5 +1,7 @@
 const jwt = require("jsonwebtoken");
 const { normalizeRole } = require("../utils/userHelpers");
+const Role = require("../models/Role");
+const User = require("../models/User");
 
 const authenticate = (req, res, next) => {
   const authHeader = req.headers.authorization || "";
@@ -56,4 +58,20 @@ const authorize = (...roles) => (req, res, next) => {
   return next();
 };
 
-module.exports = { authenticate, optionalAuthenticate, authorize };
+const authorizePermission = permission => async (req, res, next) => {
+  try {
+    if (!req.user) return res.status(401).json({ success: false, message: "Authentication required." });
+    const user = await User.findByPk(req.user.id);
+    if (!user || user.status === "inactive") return res.status(403).json({ success: false, message: "Account is inactive or unavailable." });
+    const roleName = normalizeRole(user.role);
+    req.user.role = roleName;
+    if (["admin", "super_admin"].includes(roleName)) return next();
+    const role = await Role.findOne({ where: { name: roleName, status: "active" } });
+    if (!role?.permissions?.includes(permission)) return res.status(403).json({ success: false, message: "You do not have permission for this action." });
+    return next();
+  } catch (error) {
+    return next(error);
+  }
+};
+
+module.exports = { authenticate, optionalAuthenticate, authorize, authorizePermission };

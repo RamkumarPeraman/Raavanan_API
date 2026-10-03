@@ -7,7 +7,7 @@ const {
 } = require("express-validator");
 const {
   authenticate,
-  authorize
+  authorizePermission
 } = require("../middleware/auth");
 const {
   handleValidation
@@ -21,7 +21,11 @@ const {
   sanitizeUser
 } = require("../utils/userHelpers");
 const router = express.Router();
-router.use(authenticate, authorize("ADMIN", "SUPER_ADMIN"));
+router.use(authenticate);
+router.use((req, res, next) => {
+  const action = req.method === "GET" ? "read" : req.method === "DELETE" ? "delete" : "write";
+  return authorizePermission(`users:${action}`)(req, res, next);
+});
 router.get("/stats", async (req, res) => {
   const [rows] = await sequelize.query("SELECT * FROM public.raavanan_user_stats()");
   const stats = Object.fromEntries(Object.entries(rows[0]).map(([key, value]) => [key, Number(value)]));
@@ -91,6 +95,9 @@ router.get("/:id", async (req, res) => {
 router.post("/", [body("name").trim().notEmpty().withMessage("Name is required."), body("email").isEmail().withMessage("Valid email is required."), body("password").optional().isLength({
   min: 6
 }).withMessage("Password must be at least 6 characters."), handleValidation], async (req, res) => {
+  if (!["admin", "super_admin"].includes(req.user.role) && req.body.role && req.body.role !== "member") {
+    return res.status(403).json({ success: false, message: "You cannot assign roles." });
+  }
   const email = req.body.email.trim().toLowerCase();
   const existingUser = await User.findOne({
     where: {
@@ -129,6 +136,9 @@ router.put("/:id", [body("name").optional().trim().notEmpty().withMessage("Name 
       message: "User not found."
     });
   }
+  if (!["admin", "super_admin"].includes(req.user.role) && (req.body.role !== undefined || ["admin", "super_admin"].includes(user.role))) {
+    return res.status(403).json({ success: false, message: "You cannot change this user's role or account." });
+  }
   if (req.body.email) {
     user.email = req.body.email.trim().toLowerCase();
   }
@@ -157,6 +167,9 @@ router.patch("/:id/status", async (req, res) => {
       message: "User not found."
     });
   }
+  if (!["admin", "super_admin"].includes(req.user.role) && ["admin", "super_admin"].includes(user.role)) {
+    return res.status(403).json({ success: false, message: "You cannot change this account." });
+  }
   user.status = req.body.status === "inactive" ? "inactive" : "active";
   await user.save();
   return res.json({
@@ -171,6 +184,10 @@ router.delete("/:id", async (req, res) => {
       success: false,
       message: "You cannot delete your own account here."
     });
+  }
+  const target = await User.findByPk(req.params.id);
+  if (target && !["admin", "super_admin"].includes(req.user.role) && ["admin", "super_admin"].includes(target.role)) {
+    return res.status(403).json({ success: false, message: "You cannot delete this account." });
   }
   const user = await deleteById(User, req.params.id);
   if (!user) {
