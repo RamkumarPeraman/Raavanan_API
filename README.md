@@ -36,6 +36,14 @@ On Supabase, use the Session pooler URI from the project's Connect dialog (port 
 
 Versioned SQL files in `database/migrations/` are applied transactionally by `npm run db:migrate` and on API startup. An advisory lock prevents concurrent migration runs. Applied file checksums are verified; add a new migration instead of editing an applied one. No `sync({ force: true })` or automatic schema alteration runs in production.
 
+Migration `005_database_workflows.sql` puts event registration and derived fields in PostgreSQL. `raavanan_register_for_event` locks the event row and atomically checks capacity and adds an attendee; a trigger derives `events.registered` from the attendee list for every writer. A message trigger maintains the conversation preview after inserts and deletes. Its original checksum is preserved for databases that already applied it.
+
+Migration `006_record_validation.sql` installs a PostgreSQL validation trigger on every application table. Its versioned schema snapshot checks required values, types, ranges, enums, lengths and nested JSON values, including direct SQL writes that bypass Express. It also checks email shape and service message length. When a model's stored fields change, add a new migration to update the database validation schema; do not edit an applied migration. HTTP request validation remains for immediate field errors and for values that never reach storage, such as plaintext passwords and one-time codes.
+
+Migration `007_reporting_functions.sql` provides database functions for user statistics, project metrics and donation totals. Those endpoints now read one database result instead of loading or aggregating records in JavaScript.
+
+Migration `008_message_workflows.sql` adds `raavanan_send_message`, which creates a message and recipient notifications together, and `raavanan_mark_conversation_read`, which updates the conversation, receipts and notifications together. The Express routes translate function results to the existing HTTP responses. Apply all pending migrations before running the updated API code.
+
 For a fresh local demo only, set `SEED_DEMO_DATA=true`. This creates the sample content and known demo accounts from `server.js`; it is rejected in production. Normal startup creates missing role definitions only and preserves existing roles.
 
 ## Verification

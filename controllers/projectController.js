@@ -1,6 +1,7 @@
 const { updateById, deleteById, containsText, exactText } = require("../database/records");
 const { Op } = require("sequelize");
 const Project = require("../models/Project");
+const { sequelize } = require("../config/db");
 const { listRecords } = require("../database/pagination");
 const PROJECT_FIELDS = ["title", "description", "longDescription", "image", "gallery", "status", "category", "progress", "goal", "raised", "location", "statesCovered", "startDate", "endDate", "impact", "livesImpacted", "volunteersEngaged", "objectives", "achievements", "partners", "funding", "reportUrl", "featured"];
 const toNumberOrDefault = (value, fallback = 0) => {
@@ -120,37 +121,10 @@ const getProjectById = async (req, res) => {
   });
 };
 const getProjectMetrics = async (req, res) => {
-  const projects = await Project.findAll({});
-  const statesReached = new Set();
-  let ongoingProjects = 0;
-  let completedProjects = 0;
-  let livesImpacted = 0;
-  let volunteersEngaged = 0;
-  for (const project of projects) {
-    if (project.status === "ongoing") {
-      ongoingProjects += 1;
-    }
-    if (project.status === "completed") {
-      completedProjects += 1;
-    }
-    livesImpacted += Number(project.livesImpacted || 0);
-    volunteersEngaged += Number(project.volunteersEngaged || 0);
-    for (const state of project.statesCovered || []) {
-      if (state) {
-        statesReached.add(state);
-      }
-    }
-  }
+  const [rows] = await sequelize.query("SELECT * FROM public.raavanan_project_metrics()");
   return res.json({
     success: true,
-    data: {
-      totalProjects: projects.length,
-      ongoingProjects,
-      completedProjects,
-      livesImpacted,
-      volunteersEngaged,
-      statesReached: statesReached.size
-    }
+    data: Object.fromEntries(Object.entries(rows[0]).map(([key, value]) => [key, Number(value)]))
   });
 };
 const createProject = async (req, res) => {

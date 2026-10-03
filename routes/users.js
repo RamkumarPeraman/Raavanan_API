@@ -13,6 +13,7 @@ const {
   handleValidation
 } = require("../middleware/validation");
 const User = require("../models/User");
+const { sequelize } = require("../config/db");
 const {
   DEFAULT_PASSWORD,
   createMembershipId,
@@ -22,16 +23,8 @@ const {
 const router = express.Router();
 router.use(authenticate, authorize("ADMIN", "SUPER_ADMIN"));
 router.get("/stats", async (req, res) => {
-  const users = await User.findAll({});
-  const stats = {
-    total: users.length,
-    active: users.filter(user => user.status === "active").length,
-    inactive: users.filter(user => user.status === "inactive").length,
-    leadership: users.filter(user => ["admin", "super_admin", "manager"].includes(user.role)).length,
-    volunteers: users.filter(user => ["volunteer", "volunteer_coordinator"].includes(user.role)).length,
-    members: users.filter(user => user.role === "member").length,
-    donors: users.filter(user => user.role === "donor").length
-  };
+  const [rows] = await sequelize.query("SELECT * FROM public.raavanan_user_stats()");
+  const stats = Object.fromEntries(Object.entries(rows[0]).map(([key, value]) => [key, Number(value)]));
   return res.json({
     success: true,
     data: stats

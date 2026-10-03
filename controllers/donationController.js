@@ -1,6 +1,7 @@
 const { deleteById, containsText } = require("../database/records");
 const { Op } = require("sequelize");
 const Donation = require("../models/Donation");
+const { sequelize } = require("../config/db");
 const { listRecords } = require("../database/pagination");
 const serializeDonation = donation => {
   const data = donation.toJSON ? donation.toJSON() : donation;
@@ -128,22 +129,13 @@ const getDonationStats = async (req, res) => {
   const startOfMonth = new Date();
   startOfMonth.setDate(1);
   startOfMonth.setHours(0, 0, 0, 0);
-  const [totalAmount, totalDonations, monthlyDonors, oneTimeDonors, thisMonthAmount, acceptedAmount] = await Promise.all([
-    Donation.sum("amount"), Donation.count(), Donation.count({ where: { type: "monthly" } }),
-    Donation.count({ where: { type: { [Op.ne]: "monthly" } } }),
-    Donation.sum("amount", { where: { createdAt: { [Op.gte]: startOfMonth } } }),
-    Donation.sum("amount", { where: { paymentStatus: "accepted" } }),
-  ]);
+  const [rows] = await sequelize.query(
+    "SELECT * FROM public.raavanan_donation_stats($1)",
+    { bind: [startOfMonth] }
+  );
   return res.json({
     success: true,
-    data: {
-      totalAmount: Number(totalAmount || 0),
-      acceptedAmount: Number(acceptedAmount || 0),
-      totalDonations: totalDonations,
-      monthlyDonors,
-      oneTimeDonors,
-      thisMonthAmount: Number(thisMonthAmount || 0)
-    }
+    data: Object.fromEntries(Object.entries(rows[0]).map(([key, value]) => [key, Number(value)]))
   });
 };
 module.exports = {

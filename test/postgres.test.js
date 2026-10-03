@@ -32,7 +32,7 @@ test("PostgreSQL migration and API integration", { skip: !process.env.TEST_DATAB
     await migrate();
     await migrate();
     const [rows] = await sequelize.query("SELECT count(*)::int AS count FROM schema_migrations");
-    assert.equal(rows[0].count, 4);
+    assert.equal(rows[0].count, 8);
   });
   const legacyId = new ObjectId();
   const oldDate = new Date("2023-03-04T00:00:00Z");
@@ -54,6 +54,18 @@ test("PostgreSQL migration and API integration", { skip: !process.env.TEST_DATAB
     const [rows] = await sequelize.query("SELECT document FROM legacy_documents WHERE collection = 'users'");
     assert.equal(rows[0].document.oldExtraField, "kept in archive");
     await assert.rejects(importCollections({ users: [] }), /empty target/);
+  });
+  await t.test("database validation rejects invalid direct writes", async () => {
+    await assert.rejects(
+      sequelize.query('UPDATE users SET interests = $1::jsonb WHERE id = $2', {
+        bind: ['[42]', legacyId.toHexString()]
+      }), error => error.original?.code === '23514'
+    );
+    await assert.rejects(
+      sequelize.query('UPDATE users SET email = $1 WHERE id = $2', {
+        bind: ['invalid-email', legacyId.toHexString()]
+      }), error => error.original?.code === '23514'
+    );
   });
   let deliveredSignupOtp;
   let deliveredPasswordResetOtp;
@@ -83,6 +95,9 @@ test("PostgreSQL migration and API integration", { skip: !process.env.TEST_DATAB
     assert.equal(member.user.address.country, "India");
     const other = await request("POST", "/auth/signup", { name: "Other", email: "other@example.com", password: "Password123" });
     otherToken = other.token; otherId = other.user.id;
+    const stats = await request("GET", "/users/stats", undefined, adminToken);
+    assert.equal(stats.data.total, 3);
+    assert.equal(stats.data.members, 2);
     assert.equal((await request("POST", "/auth/signup", { name: "Duplicate", email: "MEMBER@example.com", password: "Password123" })).status, 409);
     assert.equal((await request("GET", "/health")).database, "postgresql");
   });
@@ -136,6 +151,9 @@ test("PostgreSQL migration and API integration", { skip: !process.env.TEST_DATAB
     assert.equal((await request("GET", "/projects?category=education")).data.length, 1);
     const updated = await request("PUT", `/projects/${id}`, { startDate: "", progress: 50 }, adminToken);
     assert.equal(updated.data.startDate, null); assert.equal(updated.data.progress, 50);
+    const metrics = await request("GET", "/projects/metrics");
+    assert.equal(metrics.data.totalProjects, 1);
+    assert.equal(metrics.data.livesImpacted, 0);
     assert.equal((await request("PUT", `/projects/${id}`, { progress: 101 }, adminToken)).status, 400);
     assert.equal((await request("DELETE", `/projects/${id}`, undefined, adminToken)).status, 200);
     assert.equal((await request("GET", `/projects/${id}`)).status, 404);
@@ -148,7 +166,10 @@ test("PostgreSQL migration and API integration", { skip: !process.env.TEST_DATAB
     const stored = await defineModel("Event").findByPk(event.data.id);
     assert.equal(stored.attendees.length, 1);
     assert.equal(stored.registered, 1);
+    await sequelize.query('UPDATE events SET "registered" = 99 WHERE id = $1', { bind: [event.data.id] });
+    assert.equal((await defineModel("Event").findByPk(event.data.id)).registered, 1);
     const winningToken = results[0].status === 201 ? memberToken : otherToken;
+    assert.equal((await request("POST", `/events/${event.data.id}/register`, {}, winningToken)).status, 409);
     assert.equal((await request("GET", "/events/registered/me", undefined, winningToken)).data.length, 1);
   });
   await t.test("messenger participants, access, reads, notifications and cascade deletion", async () => {
@@ -157,13 +178,21 @@ test("PostgreSQL migration and API integration", { skip: !process.env.TEST_DATAB
     assert.equal(direct.data.name, "Member");
     assert.equal((await request("GET", "/messenger/conversations", undefined, memberToken)).data[0].id, id);
     assert.equal((await request("GET", `/messenger/conversations/${id}`, undefined, otherToken)).status, 404);
+    assert.equal((await request("POST", `/messenger/conversations/${id}/messages`, { content: "No access" }, otherToken)).status, 404);
+    assert.equal((await request("POST", `/messenger/conversations/${id}/read`, {}, otherToken)).status, 404);
     const message = await request("POST", `/messenger/conversations/${id}/messages`, { content: "Hello PostgreSQL" }, adminToken);
     assert.equal(message.status, 201); assert.equal(message.data.sender.id, legacyId.toHexString());
+    const directMessageId = randomUUID();
+    await sequelize.query('INSERT INTO messages (id, conversation, sender, content, "createdAt", "updatedAt") VALUES ($1, $2, $3, $4, now() + interval \'1 second\', now())', { bind: [directMessageId, id, legacyId.toHexString(), "Direct SQL message"] });
+    assert.equal((await defineModel("Conversation").findByPk(id)).lastMessage.text, "Direct SQL message");
+    await sequelize.query('DELETE FROM messages WHERE id = $1', { bind: [directMessageId] });
+    assert.equal((await defineModel("Conversation").findByPk(id)).lastMessage.text, "Hello PostgreSQL");
     assert.equal((await request("GET", `/messenger/conversations/${id}`, undefined, memberToken)).data.unreadCount, 1);
     assert.equal((await request("GET", "/messenger/notifications", undefined, memberToken)).data[0].isRead, false);
     for (let i = 0; i < 2; i++) assert.equal((await request("POST", `/messenger/conversations/${id}/read`, {}, memberToken)).status, 200);
     const messages = await request("GET", `/messenger/conversations/${id}/messages`, undefined, memberToken);
     assert.equal(messages.data[0].readBy.length, 2);
+    assert.equal((await request("GET", "/messenger/notifications", undefined, memberToken)).data[0].isRead, true);
     assert.equal((await request("GET", `/messenger/conversations/${id}`, undefined, memberToken)).data.unreadCount, 0);
     assert.equal((await request("DELETE", `/messenger/messages/${message.data.id}`, undefined, memberToken)).status, 403);
     assert.equal((await request("DELETE", `/messenger/messages/${message.data.id}`, undefined, adminToken)).status, 200);

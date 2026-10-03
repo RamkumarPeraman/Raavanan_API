@@ -1,4 +1,5 @@
 const express = require("express");
+const { randomUUID } = require("node:crypto");
 const { Op } = require("sequelize");
 const { body } = require("express-validator");
 const { sequelize } = require("../config/db");
@@ -76,29 +77,23 @@ router.get("/conversations/:id", async (req, res) => {
   res.json({ success: true, data: await formatConversation(await getConversation(req.params.id, req.user), req.user.id) });
 });
 router.post("/conversations/:id/messages", [body("content").trim().isLength({ min: 1, max: 3000 }), handleValidation], async (req, res) => {
-  const message = await sequelize.transaction(async transaction => {
-    const conversation = await getConversation(req.params.id, req.user, transaction);
-    const sender = await User.findByPk(req.user.id, { transaction });
-    if (!sender) fail(401, "User not found.");
-    const message = await Message.create({ conversation: conversation._id, sender: req.user.id, content: req.body.content, readBy: [{ user: req.user.id, seenAt: new Date() }] }, { transaction });
-    conversation.lastMessage = { text: message.content, sender: req.user.id, sentAt: message.createdAt };
-    conversation.participants = conversation.participants.map(p => ({ ...p, lastReadAt: p.user === req.user.id ? message.createdAt : p.lastReadAt }));
-    await conversation.save({ transaction });
-    const recipients = conversation.participants.filter(p => p.user !== req.user.id);
-    await Notification.bulkCreate(recipients.map(p => ({ user: p.user, type: conversation.type === "group" ? "group_message" : "direct_message", title: conversation.type === "group" ? `${sender.name} in ${conversation.name}` : `New message from ${sender.name}`, message: message.content, conversation: conversation._id, relatedMessage: message._id, sender: req.user.id })), { transaction, validate: true, individualHooks: true });
-    return message;
-  });
+  const [rows] = await sequelize.query(
+    'SELECT * FROM public.raavanan_send_message($1, $2, $3, $4)',
+    { bind: [req.params.id, req.user.id, randomUUID(), req.body.content] }
+  );
+  const outcome = rows[0];
+  if (outcome.result === "conversation_not_found") fail(404, "Conversation not found.");
+  if (outcome.result === "user_not_found") fail(401, "User not found.");
+  if (outcome.result === "invalid_content") fail(400, "Invalid message content.");
+  const message = await Message.findByPk(outcome.message_id);
   res.status(201).json({ success: true, data: (await formatMessages([message]))[0] });
 });
 router.post("/conversations/:id/read", async (req, res) => {
-  await sequelize.transaction(async transaction => {
-    const conversation = await getConversation(req.params.id, req.user, transaction);
-    const seenAt = new Date();
-    conversation.participants = conversation.participants.map(p => ({ ...p, lastReadAt: p.user === req.user.id ? seenAt : p.lastReadAt }));
-    await conversation.save({ transaction });
-    await sequelize.query(`UPDATE messages SET "readBy" = "readBy" || $1::jsonb, "updatedAt" = now() WHERE conversation = $2 AND sender <> $3 AND NOT ("readBy" @> $4::jsonb)`, { bind: [JSON.stringify([{ user: req.user.id, seenAt }]), conversation._id, req.user.id, JSON.stringify([{ user: req.user.id }])], transaction });
-    await Notification.update({ isRead: true }, { where: { user: req.user.id, conversation: conversation._id, isRead: false }, transaction });
-  });
+  const [rows] = await sequelize.query(
+    'SELECT public.raavanan_mark_conversation_read($1, $2) AS marked',
+    { bind: [req.params.id, req.user.id] }
+  );
+  if (!rows[0].marked) fail(404, "Conversation not found.");
   res.json({ success: true, message: "Conversation marked as read." });
 });
 router.put("/conversations/:id/group", [body("name").optional().trim().notEmpty(), body("participantIds").optional().isArray({ min: 1 }), body("participantIds.*").optional().isString(), handleValidation], async (req, res) => {
@@ -130,12 +125,9 @@ router.delete("/messages/:id", async (req, res) => {
   await sequelize.transaction(async transaction => {
     const message = await Message.findByPk(req.params.id, { transaction });
     if (!message) fail(404, "Message not found.");
-    const conversation = await getConversation(message.conversation, req.user, transaction);
+    await getConversation(message.conversation, req.user, transaction);
     if (message.sender !== req.user.id) fail(403, "You can delete only your own messages.");
     await message.destroy({ transaction });
-    const latest = await Message.findOne({ where: { conversation: conversation._id }, order: [["createdAt", "DESC"], ["_id", "DESC"]], transaction });
-    conversation.lastMessage = { text: latest?.content || "", sender: latest?.sender || null, sentAt: latest?.createdAt || null };
-    await conversation.save({ transaction });
   });
   res.json({ success: true, message: "Message deleted successfully." });
 });

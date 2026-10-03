@@ -8,7 +8,6 @@ const {
 } = require("../database/records");
 const Event = require("../models/Event");
 const { listRecords } = require("../database/pagination");
-const User = require("../models/User");
 const serializeEvent = event => {
   const data = event.toJSON ? event.toJSON() : event;
   return {
@@ -52,11 +51,7 @@ const getEventById = async (req, res) => {
   });
 };
 const createEvent = async (req, res) => {
-  const payload = {
-    ...req.body,
-    registered: Array.isArray(req.body.attendees) ? req.body.attendees.length : req.body.registered || 0
-  };
-  const event = await Event.create(payload);
+  const event = await Event.create(req.body);
   return res.status(201).json({
     success: true,
     message: "Event created successfully.",
@@ -64,11 +59,7 @@ const createEvent = async (req, res) => {
   });
 };
 const updateEvent = async (req, res) => {
-  const payload = {
-    ...req.body,
-    registered: req.body.registered !== undefined ? req.body.registered : Array.isArray(req.body.attendees) ? req.body.attendees.length : undefined
-  };
-  const event = await updateById(Event, req.params.id, payload);
+  const event = await updateById(Event, req.params.id, req.body);
   if (!event) {
     return res.status(404).json({
       success: false,
@@ -95,56 +86,34 @@ const deleteEvent = async (req, res) => {
   });
 };
 const registerForEvent = async (req, res) => {
-  const result = await sequelize.transaction(async transaction => {
-  const event = await Event.findByPk(req.params.id, { transaction, lock: transaction.LOCK.UPDATE });
-  if (!event) {
-    return res.status(404).json({
-      success: false,
-      message: "Event not found."
-    });
+  const [rows] = await sequelize.query(
+    'SELECT * FROM public.raavanan_register_for_event($1, $2)',
+    { bind: [req.params.id, req.user.id] }
+  );
+  const result = rows[0];
+  const failures = {
+    event_not_found: [404, "Event not found."],
+    user_not_found: [404, "User not found."],
+    already_registered: [409, "You are already registered for this event."],
+    full: [400, "This event is already full."]
+  };
+  if (failures[result.result]) {
+    const [status, message] = failures[result.result];
+    return res.status(status).json({ success: false, message });
   }
-  const user = await User.findByPk(req.user.id);
-  if (!user) {
-    return res.status(404).json({
-      success: false,
-      message: "User not found."
-    });
-  }
-  const alreadyRegistered = event.attendees.some(attendee => String(attendee.userId) === String(req.user.id));
-  if (alreadyRegistered) {
-    return res.status(409).json({
-      success: false,
-      message: "You are already registered for this event."
-    });
-  }
-  if (event.capacity > 0 && event.attendees.length >= event.capacity) {
-    return res.status(400).json({
-      success: false,
-      message: "This event is already full."
-    });
-  }
-  event.attendees = [...event.attendees, {
-    userId: user._id,
-    name: user.name,
-    email: user.email, registeredAt: new Date()
-  }];
-  event.registered = event.attendees.length;
-  await event.save({ transaction });
-  return {
+  return res.status(201).json({
     success: true,
     message: "Registration successful.",
     data: {
-      eventId: String(event._id),
+      eventId: req.params.id,
       attendee: {
-        userId: String(user._id),
-        name: user.name,
-        email: user.email
+        userId: result.attendee.userId,
+        name: result.attendee.name,
+        email: result.attendee.email
       },
-      registered: event.registered
+      registered: result.registration_count
     }
-  };
   });
-  if (!res.headersSent) return res.status(201).json(result);
 };
 module.exports = {
   listEvents,
