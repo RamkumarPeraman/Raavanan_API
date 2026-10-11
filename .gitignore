@@ -3,3 +3,4 @@ node_modules
 .test-postgres/
 backups/
 *.log
+uploads/

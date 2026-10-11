@@ -453,6 +453,37 @@ const buildSwaggerSpec = (port) =>
             responses: { 201: { description: "Report created" } },
           },
         },
+        "/api/reports/upload": {
+          post: {
+            tags: ["Content"],
+            summary: "Upload a report PDF (admin only, maximum 10 MB)",
+            security: [{ bearerAuth: [] }],
+            requestBody: {
+              required: true,
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "object",
+                    required: ["name", "data"],
+                    properties: {
+                      name: { type: "string", example: "annual-report.pdf" },
+                      data: { type: "string", description: "Base64 encoded PDF content" },
+                    },
+                  },
+                },
+              },
+            },
+            responses: { 201: { description: "Uploaded PDF URL and file size" }, 400: { description: "Invalid PDF" } },
+          },
+        },
+        "/api/reports/files/{filename}": {
+          get: {
+            tags: ["Content"],
+            summary: "Open an uploaded report PDF",
+            parameters: [{ name: "filename", in: "path", required: true, schema: { type: "string" } }],
+            responses: { 200: { description: "PDF file" }, 404: { description: "File not found" } },
+          },
+        },
         "/api/reports/{id}": {
           get: {
             tags: ["Content"],

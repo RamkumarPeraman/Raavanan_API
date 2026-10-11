@@ -2,6 +2,7 @@ const { updateById, deleteById, containsText, exactText } = require("../database
 const { Op } = require("sequelize");
 const Report = require("../models/Report");
 const { listRecords } = require("../database/pagination");
+const { removeManagedReportPdf } = require("../utils/reportFiles");
 const REPORT_FIELDS = ["title", "type", "category", "year", "period", "publishedDate", "description", "summary", "fileSize", "pages", "downloads", "views", "featured", "thumbnail", "url", "metrics", "highlights", "projects", "testimonials", "financial", "gallery", "status"];
 const toNumberOrDefault = (value, fallback = 0) => {
   if (value === "" || value === null || value === undefined) {
@@ -172,12 +173,20 @@ const createReport = async (req, res) => {
   });
 };
 const updateReport = async (req, res) => {
+  const previous = await Report.findByPk(req.params.id);
+  if (!previous) {
+    return res.status(404).json({ success: false, message: "Report not found." });
+  }
+  const previousUrl = previous.url;
   const report = await updateById(Report, req.params.id, sanitizeReportPayload(req.body));
   if (!report) {
     return res.status(404).json({
       success: false,
       message: "Report not found."
     });
+  }
+  if (previousUrl && previousUrl !== report.url) {
+    await removeManagedReportPdf(previousUrl).catch((error) => console.error("Could not remove old report PDF:", error));
   }
   return res.json({
     success: true,
@@ -186,12 +195,16 @@ const updateReport = async (req, res) => {
   });
 };
 const deleteReport = async (req, res) => {
+  const previous = await Report.findByPk(req.params.id);
   const report = await deleteById(Report, req.params.id);
   if (!report) {
     return res.status(404).json({
       success: false,
       message: "Report not found."
     });
+  }
+  if (previous?.url) {
+    await removeManagedReportPdf(previous.url).catch((error) => console.error("Could not remove deleted report PDF:", error));
   }
   return res.json({
     success: true,

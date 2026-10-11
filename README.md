@@ -46,6 +46,10 @@ Migration `008_message_workflows.sql` adds `raavanan_send_message`, which create
 
 For a fresh local demo only, set `SEED_DEMO_DATA=true`. This creates the sample content and known demo accounts from `server.js`; it is rejected in production. Normal startup creates missing role definitions only and preserves existing roles.
 
+## Report PDFs
+
+Admins can upload PDF files up to 10 MB from the Reports & Publications form. The API stores them in `uploads/reports/` by default and serves them at `/api/reports/files/:filename`. Set `REPORT_UPLOAD_DIR` to a persistent writable directory when deploying the API, and include that directory in backups. Demo report URLs under `/reports/` have no corresponding files; edit a report and upload its PDF to make the public Open file action available.
+
 ## Verification
 
 ```powershell
