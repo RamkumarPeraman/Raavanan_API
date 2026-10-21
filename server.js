@@ -19,6 +19,7 @@ const chatbotRoutes = require("./routes/chatbot");
 const messengerRoutes = require("./routes/messenger");
 const roleRoutes = require("./routes/roles");
 const wingRoutes = require("./routes/wings");
+const projectSubmissionRoutes = require("./routes/projectSubmissions");
 const adminSettingsRoutes = require("./routes/adminSettings");
 const {
   store
@@ -88,6 +89,7 @@ app.use("/api/chatbot", chatbotRoutes);
 app.use("/api/messenger", messengerRoutes);
 app.use("/api/roles", roleRoutes);
 app.use("/api/wings", wingRoutes);
+app.use("/api/project-submissions", projectSubmissionRoutes);
 app.get("/api/testimonials", (req, res) => res.json({
   success: true,
   data: store.testimonials

@@ -845,7 +845,8 @@
             "page:my_groups",
             "page:admin",
             "page:roles",
-            "page:wings"
+            "page:wings",
+            "page:project_forms"
           ]
         },
         "default": []
@@ -913,7 +914,8 @@
       "page:my_groups",
       "page:admin",
       "page:roles",
-      "page:wings"
+      "page:wings",
+      "page:project_forms"
     ]
   },
   "Service": {
@@ -1478,6 +1480,15 @@
       "wingId": { "type": "id", "required": true },
       "name": { "type": "string", "required": true, "trim": true, "maxlength": 120 },
       "description": { "type": "string", "trim": true, "default": "", "maxlength": 1000 }
+    }
+  },
+  "ProjectSubmission": {
+    "table": "project_submissions",
+    "fields": {
+      "kind": { "type": "string", "required": true, "enum": ["proposal", "report"] },
+      "title": { "type": "string", "required": true, "trim": true, "maxlength": 200 },
+      "answers": { "type": "mixed", "required": true },
+      "submittedBy": { "type": "id", "required": true }
     }
   },
   "VolunteerOpportunity": {

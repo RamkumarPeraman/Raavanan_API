@@ -32,7 +32,7 @@ test("PostgreSQL migration and API integration", { skip: !process.env.TEST_DATAB
     await migrate();
     await migrate();
     const [rows] = await sequelize.query("SELECT count(*)::int AS count FROM schema_migrations");
-    assert.equal(rows[0].count, 12);
+    assert.equal(rows[0].count, 13);
   });
   const legacyId = new ObjectId();
   const oldDate = new Date("2023-03-04T00:00:00Z");
@@ -126,6 +126,28 @@ test("PostgreSQL migration and API integration", { skip: !process.env.TEST_DATAB
     assert.equal((await request("DELETE", `/wings/sub-wings/${subWing.data.id}`, undefined, adminToken)).status, 200);
     assert.equal((await request("DELETE", `/wings/${first.data.id}`, undefined, adminToken)).status, 200);
     assert.equal((await request("GET", "/wings", undefined, adminToken)).data.length, 1);
+  });
+  await t.test("project proposal and report submissions are saved and access controlled", async () => {
+    const proposal = { kind: "proposal", title: "Community Library", answers: {
+      submittedByName: "Legacy Admin", departmentWing: "Education", submissionDate: "2026-10-21",
+      objective: "Open a library", summary: "A reading room for the community",
+      targetGroup: "Students", timeline: "Three months", estimatedBudget: "5000", resourceNeeds: "Volunteers"
+    } };
+    assert.equal((await request("POST", "/project-submissions", { ...proposal, answers: {} }, adminToken)).status, 400);
+    const created = await request("POST", "/project-submissions", proposal, adminToken);
+    assert.equal(created.status, 201);
+    assert.equal(created.data.answers.objective, "Open a library");
+    assert.equal((await request("GET", "/project-submissions?kind=proposal", undefined, adminToken)).data[0].id, created.data.id);
+    assert.equal((await request("GET", `/project-submissions/${created.data.id}`, undefined, adminToken)).data.title, "Community Library");
+    assert.equal((await request("GET", "/project-submissions", undefined, memberToken)).status, 403);
+    const report = await request("POST", "/project-submissions", { kind: "report", title: "Library Opening", answers: {
+      conductedBy: "Education wing", datesLocation: "21 October, Chennai", objectiveRecap: "Open a library",
+      activities: "Reading sessions", attendeeCount: "25", targetAudience: "Students",
+      volunteers: "Five volunteers", achievements: "Library opened", preparedName: "Legacy Admin",
+      preparedDate: "2026-10-21", budgetItems: [{ item: "Books", estimated: "1000", actual: "900", remarks: "Donated" }]
+    } }, adminToken);
+    assert.equal(report.status, 201);
+    assert.equal(report.data.answers.budgetItems[0].item, "Books");
   });
   await t.test("signup OTP is emailed, hashed in the database and required before account creation", async () => {
     const email = "verified-signup@example.com";
