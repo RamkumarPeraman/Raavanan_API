@@ -187,6 +187,7 @@ const seedCollection = async (Model, seedData) => {
   });
 };
 const seedRoles = async () => {
+  const isNewInstallation = await Role.count({}) === 0;
   const systemRoles = [{
     name: "super_admin",
     displayName: "Super Admin",
@@ -237,7 +238,7 @@ const seedRoles = async () => {
     isSystem: true,
     color: "#db2777"
   }];
-  for (const role of systemRoles) {
+  for (const role of isNewInstallation ? systemRoles : systemRoles.filter(role => role.name === "super_admin")) {
     await Role.findOrCreate({ where: { name: role.name }, defaults: role });
   }
 };

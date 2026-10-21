@@ -232,6 +232,15 @@ test("PostgreSQL migration and API integration", { skip: !process.env.TEST_DATAB
     assert.equal((await request("GET", "/roles", undefined, memberToken)).status, 200);
     assert.equal((await request("PUT", `/users/${memberId}`, { role: "super_admin" }, memberToken)).status, 403);
   });
+  await t.test("only Super Admin is protected from role deletion and deleted defaults stay deleted", async () => {
+    const roles = (await request("GET", "/roles", undefined, adminToken)).data;
+    const roleId = name => roles.find(role => role.name === name).id;
+    assert.equal((await request("DELETE", `/roles/${roleId("super_admin")}`, undefined, adminToken)).status, 400);
+    assert.equal((await request("DELETE", `/roles/${roleId("member")}`, undefined, adminToken)).status, 400);
+    assert.equal((await request("DELETE", `/roles/${roleId("donor")}`, undefined, adminToken)).status, 200);
+    await seedRoles();
+    assert.equal(await Role.findOne({ where: { name: "donor" } }), null);
+  });
   await t.test("every content model supports validated PostgreSQL writes", async () => {
     const seeds = require("../data/contentSeeds");
     for (const [name, rows] of [["Blog", seeds.blogSeeds], ["Report", seeds.reportSeeds], ["VolunteerOpportunity", seeds.volunteerOpportunitySeeds]]) {

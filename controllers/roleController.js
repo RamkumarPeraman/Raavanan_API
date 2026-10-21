@@ -6,6 +6,7 @@ const {
 } = require("../models/Role");
 const User = require("../models/User");
 const isProtectedRole = role => role.isSystem || ["super_admin", "admin", "member"].includes(role.name);
+const isUndeletableRole = role => role.name?.toLowerCase() === "super_admin";
 const {
   sanitizeUser,
   normalizeRole,
@@ -165,10 +166,10 @@ const deleteRole = async (req, res) => {
       message: "Role not found."
     });
   }
-  if (isProtectedRole(role)) {
+  if (isUndeletableRole(role)) {
     return res.status(400).json({
       success: false,
-      message: "System roles cannot be deleted."
+      message: "Super Admin cannot be deleted."
     });
   }
   const usersWithRole = await User.count({
