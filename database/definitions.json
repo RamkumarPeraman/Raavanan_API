@@ -1488,7 +1488,10 @@
       "kind": { "type": "string", "required": true, "enum": ["proposal", "report"] },
       "title": { "type": "string", "required": true, "trim": true, "maxlength": 200 },
       "answers": { "type": "mixed", "required": true },
-      "submittedBy": { "type": "id", "required": true }
+      "submittedBy": { "type": "id", "required": true },
+      "status": { "type": "string", "required": true, "enum": ["pending", "approved", "rejected"], "default": "pending" },
+      "reviewedBy": { "type": "id" },
+      "reviewedAt": { "type": "date" }
     }
   },
   "VolunteerOpportunity": {

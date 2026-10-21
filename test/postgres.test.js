@@ -32,7 +32,7 @@ test("PostgreSQL migration and API integration", { skip: !process.env.TEST_DATAB
     await migrate();
     await migrate();
     const [rows] = await sequelize.query("SELECT count(*)::int AS count FROM schema_migrations");
-    assert.equal(rows[0].count, 13);
+    assert.equal(rows[0].count, 14);
   });
   const legacyId = new ObjectId();
   const oldDate = new Date("2023-03-04T00:00:00Z");
@@ -136,10 +136,22 @@ test("PostgreSQL migration and API integration", { skip: !process.env.TEST_DATAB
     assert.equal((await request("POST", "/project-submissions", { ...proposal, answers: {} }, adminToken)).status, 400);
     const created = await request("POST", "/project-submissions", proposal, adminToken);
     assert.equal(created.status, 201);
+    assert.equal(created.data.status, "pending");
     assert.equal(created.data.answers.objective, "Open a library");
     assert.equal((await request("GET", "/project-submissions?kind=proposal", undefined, adminToken)).data[0].id, created.data.id);
     assert.equal((await request("GET", `/project-submissions/${created.data.id}`, undefined, adminToken)).data.title, "Community Library");
     assert.equal((await request("GET", "/project-submissions", undefined, memberToken)).status, 403);
+    assert.equal((await request("PUT", `/project-submissions/${created.data.id}`, proposal, memberToken)).status, 403);
+    assert.equal((await request("PATCH", `/project-submissions/${created.data.id}/status`, { status: "approved" }, memberToken)).status, 403);
+    assert.equal((await request("DELETE", `/project-submissions/${created.data.id}`, undefined, memberToken)).status, 403);
+    const updated = await request("PUT", `/project-submissions/${created.data.id}`, { title: "Community Library Updated", answers: { ...proposal.answers, objective: "Expand access to books" } }, adminToken);
+    assert.equal(updated.status, 200);
+    assert.equal(updated.data.answers.objective, "Expand access to books");
+    assert.equal((await request("PATCH", `/project-submissions/${created.data.id}/status`, { status: "invalid" }, adminToken)).status, 400);
+    const approved = await request("PATCH", `/project-submissions/${created.data.id}/status`, { status: "approved" }, adminToken);
+    assert.equal(approved.data.status, "approved");
+    assert.ok(approved.data.reviewedAt);
+    assert.equal((await request("GET", "/project-submissions?kind=proposal&search=Updated&page=1&pageSize=5", undefined, adminToken)).totalRowCount, 1);
     const report = await request("POST", "/project-submissions", { kind: "report", title: "Library Opening", answers: {
       conductedBy: "Education wing", datesLocation: "21 October, Chennai", objectiveRecap: "Open a library",
       activities: "Reading sessions", attendeeCount: "25", targetAudience: "Students",
@@ -148,6 +160,8 @@ test("PostgreSQL migration and API integration", { skip: !process.env.TEST_DATAB
     } }, adminToken);
     assert.equal(report.status, 201);
     assert.equal(report.data.answers.budgetItems[0].item, "Books");
+    assert.equal((await request("DELETE", `/project-submissions/${created.data.id}`, undefined, adminToken)).status, 200);
+    assert.equal((await request("GET", `/project-submissions/${created.data.id}`, undefined, adminToken)).status, 404);
   });
   await t.test("signup OTP is emailed, hashed in the database and required before account creation", async () => {
     const email = "verified-signup@example.com";
