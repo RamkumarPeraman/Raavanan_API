@@ -18,6 +18,7 @@ const volunteerOpportunityRoutes = require("./routes/volunteerOpportunities");
 const chatbotRoutes = require("./routes/chatbot");
 const messengerRoutes = require("./routes/messenger");
 const roleRoutes = require("./routes/roles");
+const wingRoutes = require("./routes/wings");
 const adminSettingsRoutes = require("./routes/adminSettings");
 const {
   store
@@ -86,6 +87,7 @@ app.use("/api/volunteer-opportunities", volunteerOpportunityRoutes);
 app.use("/api/chatbot", chatbotRoutes);
 app.use("/api/messenger", messengerRoutes);
 app.use("/api/roles", roleRoutes);
+app.use("/api/wings", wingRoutes);
 app.get("/api/testimonials", (req, res) => res.json({
   success: true,
   data: store.testimonials
@@ -187,7 +189,8 @@ const seedCollection = async (Model, seedData) => {
   });
 };
 const seedRoles = async () => {
-  const isNewInstallation = await Role.count({}) === 0;
+  const [deletedRows] = await sequelize.query("SELECT name FROM public.deleted_default_roles");
+  const deletedDefaults = new Set(deletedRows.map(row => row.name));
   const systemRoles = [{
     name: "super_admin",
     displayName: "Super Admin",
@@ -238,8 +241,11 @@ const seedRoles = async () => {
     isSystem: true,
     color: "#db2777"
   }];
-  for (const role of isNewInstallation ? systemRoles : systemRoles.filter(role => role.name === "super_admin")) {
-    await Role.findOrCreate({ where: { name: role.name }, defaults: role });
+  for (const role of systemRoles.filter(role => role.name === "super_admin" || !deletedDefaults.has(role.name))) {
+    const [saved] = await Role.findOrCreate({ where: { name: role.name }, defaults: role });
+    if (role.name === "super_admin" && Role.AVAILABLE_PERMISSIONS.some(permission => !saved.permissions.includes(permission))) {
+      await saved.update({ permissions: Role.AVAILABLE_PERMISSIONS });
+    }
   }
 };
 const startServer = async () => {

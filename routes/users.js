@@ -13,6 +13,7 @@ const {
   handleValidation
 } = require("../middleware/validation");
 const User = require("../models/User");
+const SubWing = require("../models/SubWing");
 const { sequelize } = require("../config/db");
 const {
   DEFAULT_PASSWORD,
@@ -21,6 +22,13 @@ const {
   sanitizeUser
 } = require("../utils/userHelpers");
 const router = express.Router();
+const resolveDepartment = async body => {
+  if (body.wingId === undefined && body.departmentId === undefined) return null;
+  if (!body.wingId || !body.departmentId) return { error: "Select a wing and department." };
+  const department = await SubWing.findByPk(body.departmentId);
+  if (!department || department.wingId !== body.wingId) return { error: "Select a department from the chosen wing." };
+  return { wingId: body.wingId, departmentId: department._id, department: department.name };
+};
 router.use(authenticate);
 router.use((req, res, next) => {
   const action = req.method === "GET" ? "read" : req.method === "DELETE" ? "delete" : "write";
@@ -110,10 +118,13 @@ router.post("/", [body("name").trim().notEmpty().withMessage("Name is required."
       message: "User already exists."
     });
   }
+  const assignment = await resolveDepartment(req.body);
+  if (assignment?.error) return res.status(400).json({ success: false, message: assignment.error });
   const password = req.body.password || req.body.phone || DEFAULT_PASSWORD;
   const role = req.body.role || "member";
   const user = await User.create({
     ...req.body,
+    ...(assignment || {}),
     email,
     role,
     passwordHash: await bcrypt.hash(password, 10),
@@ -139,6 +150,8 @@ router.put("/:id", [body("name").optional().trim().notEmpty().withMessage("Name 
   if (!["admin", "super_admin"].includes(req.user.role) && (req.body.role !== undefined || ["admin", "super_admin"].includes(user.role))) {
     return res.status(403).json({ success: false, message: "You cannot change this user's role or account." });
   }
+  const assignment = await resolveDepartment(req.body);
+  if (assignment?.error) return res.status(400).json({ success: false, message: assignment.error });
   if (req.body.email) {
     user.email = req.body.email.trim().toLowerCase();
   }
@@ -148,6 +161,7 @@ router.put("/:id", [body("name").optional().trim().notEmpty().withMessage("Name 
       user[field] = req.body[field];
     }
   }
+  if (assignment) Object.assign(user, assignment);
   if (req.body.password) {
     user.passwordHash = await bcrypt.hash(req.body.password, 10);
   }

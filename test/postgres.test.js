@@ -32,7 +32,7 @@ test("PostgreSQL migration and API integration", { skip: !process.env.TEST_DATAB
     await migrate();
     await migrate();
     const [rows] = await sequelize.query("SELECT count(*)::int AS count FROM schema_migrations");
-    assert.equal(rows[0].count, 9);
+    assert.equal(rows[0].count, 12);
   });
   const legacyId = new ObjectId();
   const oldDate = new Date("2023-03-04T00:00:00Z");
@@ -100,6 +100,32 @@ test("PostgreSQL migration and API integration", { skip: !process.env.TEST_DATAB
     assert.equal(stats.data.members, 2);
     assert.equal((await request("POST", "/auth/signup", { name: "Duplicate", email: "MEMBER@example.com", password: "Password123" })).status, 409);
     assert.equal((await request("GET", "/health")).database, "postgresql");
+  });
+  await t.test("wings show only their own sub wings and enforce deletion order", async () => {
+    assert.equal((await request("GET", "/wings", undefined, memberToken)).status, 403);
+    const first = await request("POST", "/wings", { name: "Education" }, adminToken);
+    const second = await request("POST", "/wings", { name: "Culture" }, adminToken);
+    assert.equal(first.status, 201);
+    assert.equal(second.status, 201);
+    assert.equal((await request("POST", "/wings", { name: "Forbidden" }, memberToken)).status, 403);
+    assert.equal((await request("POST", "/wings", { name: " education " }, adminToken)).status, 409);
+    const subWing = await request("POST", `/wings/${first.data.id}/sub-wings`, { name: "Library" }, adminToken);
+    assert.equal(subWing.status, 201);
+    assert.equal((await request("PUT", `/wings/${first.data.id}`, { name: "Learning" }, adminToken)).status, 200);
+    assert.equal((await request("PUT", `/wings/sub-wings/${subWing.data.id}`, { name: "Mobile Library" }, adminToken)).status, 200);
+    assert.equal((await request("GET", `/wings/${first.data.id}/sub-wings`, undefined, adminToken)).data[0].name, "Mobile Library");
+    assert.equal((await request("GET", `/wings/${first.data.id}/sub-wings`, undefined, adminToken)).data.length, 1);
+    assert.equal((await request("GET", `/wings/${second.data.id}/sub-wings`, undefined, adminToken)).data.length, 0);
+    assert.equal((await request("DELETE", `/wings/${first.data.id}`, undefined, adminToken)).status, 409);
+    const assigned = await request("POST", "/users", { name: "Wing Member", email: "wing-member@example.com", password: "Password123", role: "member", wingId: first.data.id, departmentId: subWing.data.id }, adminToken);
+    assert.equal(assigned.status, 201);
+    assert.equal(assigned.data.department, "Mobile Library");
+    assert.equal((await request("PUT", `/users/${assigned.data.id}`, { wingId: second.data.id, departmentId: subWing.data.id }, adminToken)).status, 400);
+    assert.equal((await request("DELETE", `/wings/sub-wings/${subWing.data.id}`, undefined, adminToken)).status, 409);
+    assert.equal((await request("DELETE", `/users/${assigned.data.id}`, undefined, adminToken)).status, 200);
+    assert.equal((await request("DELETE", `/wings/sub-wings/${subWing.data.id}`, undefined, adminToken)).status, 200);
+    assert.equal((await request("DELETE", `/wings/${first.data.id}`, undefined, adminToken)).status, 200);
+    assert.equal((await request("GET", "/wings", undefined, adminToken)).data.length, 1);
   });
   await t.test("signup OTP is emailed, hashed in the database and required before account creation", async () => {
     const email = "verified-signup@example.com";
@@ -240,6 +266,15 @@ test("PostgreSQL migration and API integration", { skip: !process.env.TEST_DATAB
     assert.equal((await request("DELETE", `/roles/${roleId("donor")}`, undefined, adminToken)).status, 200);
     await seedRoles();
     assert.equal(await Role.findOne({ where: { name: "donor" } }), null);
+  });
+  await t.test("Super Admin receives newly added page permissions", async () => {
+    const role = await Role.findOne({ where: { name: "super_admin" } });
+    await role.update({ permissions: role.permissions.filter(permission => permission !== "page:wings") });
+    await seedRoles();
+    assert.ok((await role.reload()).permissions.includes("page:wings"));
+    const updated = await request("PUT", `/roles/${role.id}`, { permissions: ["page:home"] }, adminToken);
+    assert.equal(updated.status, 200);
+    assert.ok(updated.data.permissions.includes("page:wings"));
   });
   await t.test("every content model supports validated PostgreSQL writes", async () => {
     const seeds = require("../data/contentSeeds");

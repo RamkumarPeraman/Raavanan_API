@@ -1,4 +1,5 @@
-const { deleteById, containsText } = require("../database/records");
+const { containsText } = require("../database/records");
+const { sequelize } = require("../config/db");
 const { Op } = require("sequelize");
 const Role = require("../models/Role");
 const {
@@ -148,7 +149,8 @@ const updateRole = async (req, res) => {
   }
   if (displayName !== undefined) role.displayName = displayName.trim();
   if (description !== undefined) role.description = description;
-  if (permissions !== undefined) role.permissions = permissions;
+  if (role.name === "super_admin") role.permissions = AVAILABLE_PERMISSIONS;
+  else if (permissions !== undefined) role.permissions = permissions;
   if (color !== undefined) role.color = color;
   if (status !== undefined) role.status = status;
   await role.save();
@@ -183,7 +185,14 @@ const deleteRole = async (req, res) => {
       message: `Cannot delete role. ${usersWithRole} user(s) are currently assigned this role.`
     });
   }
-  await deleteById(Role, req.params.id);
+  await sequelize.transaction(async transaction => {
+    await role.destroy({ transaction });
+    if (role.isSystem) {
+      await sequelize.query('INSERT INTO public.deleted_default_roles (name) VALUES ($1) ON CONFLICT (name) DO NOTHING', {
+        bind: [role.name], transaction
+      });
+    }
+  });
   return res.json({
     success: true,
     message: "Role deleted successfully."
